@@ -1,6 +1,7 @@
 # CBB Live: shot volume and 3P scoreboard
 
-A live NCAA D-I men's scoreboard. For every game it shows status, TV channel, score, and each team's
+A live NCAA D-I men's scoreboard. For every game it shows status, TV channel, score, the best available live spread
+and over/under across US sportsbooks (with the book for each), and each team's
 3-point shooting (3PM-3PA, 3PM and 3PA differences, 3P%, 3P% gap), shot volume (**FGA + FTA/2**) with the margin,
 and points in the paint with the margin.
 
@@ -19,3 +20,27 @@ also loads each live game's ESPN summary on every refresh (finals load once). Sm
 play-by-play may show no paint points. No API key is needed.
 
 Filters: All / Live / Upcoming / Final, Flagged only, Ranked teams only, and a date picker for other days.
+
+## Live odds (The Odds API)
+Lines come from The Odds API (`basketball_ncaab`, `regions=us`, `markets=spreads,totals`, no moneyline). For each
+team's spread the page shows the most points available (then the best price), plus the lowest Over and highest Under,
+and names the book for each one. Until the Worker below is connected, ESPN's pregame line is shown instead.
+
+**Credits:** one call is 2 credits and covers every game. Odds are only requested while a game on today's slate is
+live and the tab is visible, every 2.5 minutes (`ODDS_MIN` near the top of `index.html`). That is about 48 credits per
+live hour, or roughly 580 for a 12-hour Saturday. The Worker also makes at most one real call per 60 seconds, however
+many tabs are open. Tiles show credits remaining/used (from the `x-requests-*` headers) and what this page spent today
+and this session.
+
+### One-time setup: Cloudflare Worker (about 5 minutes, free)
+The Odds API key must not be in this public page, so a small Cloudflare Worker holds it.
+
+1. Sign in at https://dash.cloudflare.com (the free plan is enough).
+2. **Workers & Pages** → **Create** → **Create Worker** (Hello World). Name it e.g. `cbb-odds` and click **Deploy**.
+3. **Edit code**: delete everything, paste in [`worker/odds-proxy.js`](worker/odds-proxy.js), click **Deploy**.
+4. Worker → **Settings** → **Variables and Secrets** → **Add**: type **Secret**, name `ODDS_API_KEY`, value = your key. Deploy.
+5. Copy the Worker URL (e.g. `https://cbb-odds.<your-subdomain>.workers.dev`) and set `WORKER_URL` near the top of
+   `index.html` to it (or send it to Claude to do it).
+
+The Worker only answers browser requests from `https://tannerstruth.github.io`. That doesn't stop someone with the URL
+from calling it with a script, but the 60-second cache limits the cost, and you can rotate the key or delete the Worker anytime.

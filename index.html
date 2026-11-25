@@ -66,6 +66,8 @@ tbody.g{border-bottom:1px solid var(--border)}
 .rk{color:var(--ink-3);font-size:11px;margin-right:3px}
 .team{font-weight:500}
 .score{font-weight:700;font-size:15px}
+.line{font-weight:600}
+.src{display:block;color:var(--ink-3);font-size:11px;font-weight:400}
 .lead .score{color:var(--ink)} .trail .score{color:var(--ink-2)}
 .line{font-weight:600}
 .src{display:block;color:var(--ink-3);font-size:11px;font-weight:400}
@@ -113,24 +115,33 @@ tr.flag td.team{font-weight:700}
   <div class="tw"><table id="tbl">
     <thead>
       <tr><th class="l">Status</th><th class="l">TV</th><th class="l">Team</th><th>Score</th>
+        <th class="bl">Spread</th><th>Total</th>
         <th class="grp" colspan="5">3-point</th>
         <th class="grp" colspan="4">Shot volume</th>
         <th class="grp" colspan="2">Paint</th></tr>
-      <tr><th class="l"></th><th class="l"></th><th class="l"></th><th></th>
+      <tr><th class="l"></th><th class="l"></th><th class="l"></th><th></th><th class="bl">best</th><th>best O / U</th>
         <th class="bl">3PM-3PA</th><th>3PM diff</th><th>3PA diff</th><th>3P%</th><th>3P% diff</th>
         <th class="bl">FGA</th><th>FTA</th><th>Volume</th><th>Margin</th><th class="bl">Pts</th><th>Margin</th></tr>
     </thead>
-    <tbody><tr><td colspan="15" class="empty">Loading scoreboard…</td></tr></tbody>
+    <tbody><tr><td colspan="17" class="empty">Loading scoreboard…</td></tr></tbody>
   </table></div>
-  <p class="note" id="foot">Scores, TV and box stats: ESPN public scoreboard.</p>
+  <p class="note" id="foot"></p>
 </main>
 <script>
 "use strict";
 (function(){
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball";
+// ---- Live odds config ----
+// Paste your Cloudflare Worker URL here after deploying worker/odds-proxy.js (see README).
+// Leave it empty to run without live odds. Lines are the best available across US books.
+const WORKER_URL = "";
+const ODDS_MIN = 2.5;   // minutes between odds calls (each call = 2 credits: spreads + totals)
+// ---------------------------
 const DEFAULTS = {espnSec:20, sv:0, gap:0, paint:0, hidden:false};
 const S = DEFAULTS;
-const st = {games:[], espnErr:"", lastEspn:0, show:"all", summaryCache:{}};
+const LSU = "cbbLive.usage";
+const st = {games:[], espnErr:"", lastEspn:0, show:"all", summaryCache:{},
+            odds:null, oddsErr:"", usage:null, lastOdds:0, sessionCalls:0, sessionCredits:0, startRemaining:null};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
@@ -167,7 +178,8 @@ function parseEvent(e){
   })).sort((a,b) => (a.side==="away"?0:1) - (b.side==="away"?0:1)); // away first, home second
   const ty = e.status?.type || {};
   return { id: e.id, date: e.date, state: ty.state || "pre", detail: ty.shortDetail || ty.detail || "",
-           period: e.status?.period, neutral: !!c.neutralSite, tv: tvNames.join(", "), teams };
+           period: e.status?.period, neutral: !!c.neutralSite, tv: tvNames.join(", "), teams,
+           espnLine: (c.odds || [])[0] ? {details: c.odds[0].details, total: c.odds[0].overUnder} : null };
 }
 async function fetchEspn(){
   const d = ($("dateIn").value || todayStr()).replace(/-/g,"");
@@ -206,6 +218,97 @@ function applySummary(g, bxTeams){
 // ---------- derived stats ----------
 const sv = s => s ? s.fga + s.fta/2 : null;
 const pct = (m,a) => a ? 100*m/a : null;
+// ---------- Odds (via Worker) ----------
+async function fetchUsage(){
+  if(!WORKER_URL) return;
+  try{
+    const j = await (await fetch(`${WORKER_URL}/usage`)).json();
+    if(j.usage){ st.usage = j.usage; if(st.startRemaining == null) st.startRemaining = j.usage.remaining; }
+    if(j.error) st.oddsErr = j.error;
+  }catch(err){ st.oddsErr = `Odds proxy unreachable (${err.message})`; }
+  render();
+}
+async function fetchOdds(){
+  st.lastOdds = Date.now();
+  try{
+    const r = await fetch(`${WORKER_URL}/odds`, {cache:"no-store"});
+    const j = await r.json();
+    if(j.usage && j.usage.remaining != null){
+      st.usage = j.usage;
+      if(st.startRemaining == null) st.startRemaining = j.usage.remaining + (j.cached ? 0 : (j.usage.last || 0));
+    }
+    if(!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+    if(!j.cached){
+      const spent = j.usage?.last ?? 2;
+      st.sessionCalls++; st.sessionCredits += spent;
+      const u = JSON.parse(localStorage.getItem(LSU) || "{}"), day = todayStr();
+      u[day] = u[day] || {calls:0, credits:0}; u[day].calls++; u[day].credits += spent;
+      for(const k of Object.keys(u).sort().slice(0, -14)) delete u[k];
+      localStorage.setItem(LSU, JSON.stringify(u));
+    }
+    st.odds = j; st.oddsErr = "";
+  }catch(err){ st.oddsErr = `Odds failed: ${err.message}`; }
+  render();
+}
+
+// Team-name matching between ESPN and The Odds API (tip time ±6h + name similarity)
+const STOP = new Set(["the","university","of","univ"]);
+function toks(s){
+  return String(s).toLowerCase().replace(/&/g," and ").replace(/['’.()]/g,"").replace(/-/g," ")
+    .replace(/\bstate\b/g,"st").replace(/\bsaint\b/g,"st").split(/\s+/).filter(w => w && !STOP.has(w));
+}
+function sim(a, b){
+  const A = new Set(toks(a)), B = new Set(toks(b)); if(!A.size || !B.size) return 0;
+  let n = 0; for(const x of A) if(B.has(x)) n++;
+  return 2*n / (A.size + B.size);
+}
+function matchOdds(g){
+  const evs = st.odds?.data; if(!evs) return null;
+  const t0 = Date.parse(g.date); let best = null;
+  const [away, home] = g.teams;
+  for(const ev of evs){
+    if(Math.abs(Date.parse(ev.commence_time) - t0) > 6*3600e3) continue;
+    const straight = Math.min(sim(away.name, ev.away_team), sim(home.name, ev.home_team));
+    const flipped  = Math.min(sim(away.name, ev.home_team), sim(home.name, ev.away_team));
+    const score = Math.max(straight, flipped);
+    if(score >= 0.5 && (!best || score > best.score)) best = {ev, score, homeName: straight >= flipped ? ev.home_team : ev.away_team};
+  }
+  return best;
+}
+// Best available line across US books: for each team's spread the most points (then best price),
+// lowest Over, highest Under (then best price). Each one names its book.
+const better = (a, b, wantHigh) => !b || (a.point !== b.point ? (wantHigh ? a.point > b.point : a.point < b.point) : a.price > b.price);
+function lineFor(g){
+  const m = matchOdds(g), [away, home] = g.teams;
+  if(m){
+    const awayName = m.homeName === m.ev.home_team ? m.ev.away_team : m.ev.home_team;
+    const best = {away:null, home:null, over:null, under:null}; let upd = 0;
+    for(const b of m.ev.bookmakers || []) for(const mk of b.markets || []){
+      upd = Math.max(upd, Date.parse(mk.last_update || b.last_update || 0) || 0);
+      for(const o of mk.outcomes || []){
+        if(o.point == null) continue;
+        const c = {point:o.point, price:o.price, book:b.title};
+        if(mk.key === "spreads"){
+          const side = o.name === m.homeName ? "home" : o.name === awayName ? "away" : null;
+          if(side && better(c, best[side], true)) best[side] = c;
+        }else if(mk.key === "totals"){
+          if(o.name === "Over" && better(c, best.over, false)) best.over = c;
+          if(o.name === "Under" && better(c, best.under, true)) best.under = c;
+        }
+      }
+    }
+    if(best.away || best.home || best.over || best.under) return {best, upd, live: g.state === "in"};
+  }
+  if(g.espnLine && (g.espnLine.details || g.espnLine.total)) return {espn: g.espnLine};
+  return null;
+}
+const fmtPt = p => p === 0 ? "PK" : (p > 0 ? "+" : "−") + Math.abs(p);
+const fmtPr = p => p == null ? "" : (p > 0 ? "+" : "−") + Math.abs(p);
+function lineCell(c, prefix){
+  if(!c) return '<span class="muted">–</span>';
+  return `${prefix}${prefix ? c.point : fmtPt(c.point)} <span class="muted">${fmtPr(c.price)}</span><span class="src">${esc(c.book)}</span>`;
+}
+
 function derive(g){
   const [a, h] = g.teams;
   for(const [t, o] of [[a,h],[h,a]]){
@@ -239,7 +342,7 @@ function statusCell(g){
   if(g.state === "pre") return `<span class="status pre">${esc(new Date(g.date).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"}))}</span>`;
   return `<span class="status ${g.state}">${esc(g.detail)}</span>`;
 }
-function teamRow(g, t, o, first){
+function teamRow(g, t, o, first, L){
   const lead = t.score != null && o.score != null && g.state !== "pre" ? (t.score > o.score ? "lead" : t.score < o.score ? "trail" : "") : "";
   const s = t.stats;
   let h = `<tr class="${lead}${t.flag ? " flag" : ""}">`;
@@ -249,6 +352,15 @@ function teamRow(g, t, o, first){
   }
   h += `<td class="l team">${t.rank ? `<span class="rk">${t.rank}</span>` : ""}${esc(t.short)}${t.flag ? '<span class="fl">FLAG</span>' : ""}</td>`;
   h += `<td class="score">${t.score == null || g.state === "pre" ? "" : t.score}</td>`;
+  if(L?.best){
+    const b = L.best, side = first ? "away" : "home";
+    h += `<td class="bl line">${lineCell(b[side], "")}</td><td class="line">${first ? lineCell(b.over, "O ") : lineCell(b.under, "U ")}</td>`;
+  }else if(L?.espn){
+    h += first ? `<td class="bl line" rowspan="2">${esc(L.espn.details) || '<span class="muted">–</span>'}<span class="src">ESPN pregame</span></td>`
+               + `<td class="line" rowspan="2">${L.espn.total != null ? "O/U " + esc(L.espn.total) : '<span class="muted">–</span>'}</td>` : "";
+  }else if(first){
+    h += `<td class="bl muted" rowspan="2">–</td><td class="muted" rowspan="2">–</td>`;
+  }
   if(s){
     h += `<td class="bl">${s.tpm}-${s.tpa}</td><td>${sgnI(t.tpmD)}</td><td>${sgnI(t.tpaD)}</td><td>${t.tpp == null ? "–" : f1(t.tpp) + "%"}</td>`;
     h += `<td><span class="pc" style="${green(t.tpDiff == null ? null : -t.tpDiff, 25)}">${sgn(t.tpDiff)}</span></td>`;
@@ -268,28 +380,33 @@ function render(){
   let list = st.games.filter(g => (st.show === "all" || g.state === st.show) && (!flagOnly || g.flagged) && (!rankedOnly || g.teams.some(t => t.rank)));
   list.sort((a,b) => (ORDER[a.state]-ORDER[b.state]) || ((b.flagged?1:0)-(a.flagged?1:0)) || (Date.parse(a.date)-Date.parse(b.date)));
   let html;
-  if(!st.games.length) html = `<tbody><tr><td colspan="15" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
-  else if(!list.length) html = `<tbody><tr><td colspan="15" class="empty">No games match these filters.</td></tr></tbody>`;
+  if(!st.games.length) html = `<tbody><tr><td colspan="17" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
+  else if(!list.length) html = `<tbody><tr><td colspan="17" class="empty">No games match these filters.</td></tr></tbody>`;
   else html = list.map(g => {
-    const [a, h] = g.teams;
-    return `<tbody class="g ${g.state}">${teamRow(g, a, h, true)}${teamRow(g, h, a, false)}</tbody>`;
+    const L = lineFor(g), [a, h] = g.teams;
+    return `<tbody class="g ${g.state}">${teamRow(g, a, h, true, L)}${teamRow(g, h, a, false, L)}</tbody>`;
   }).join("");
   const table = $("tbl");
   table.querySelectorAll("tbody").forEach(tb => tb.remove());
   table.insertAdjacentHTML("beforeend", html);
   renderTiles();
   const live = st.games.filter(g => g.state === "in").length;
-  $("stamp").textContent = st.lastEspn ? `${live} live · updated ${new Date(st.lastEspn).toLocaleTimeString()}` : "";
-  $("foot").innerHTML = `Scores, TV and box stats: ESPN public scoreboard.`
-    + (st.espnErr ? `<br><span class="err">${esc(st.espnErr)}</span>` : "");
+  $("stamp").textContent = st.lastEspn ? `${live} live · scores ${new Date(st.lastEspn).toLocaleTimeString()}${st.odds ? ` · odds ${new Date(st.lastOdds).toLocaleTimeString()}` : ""}` : "";
+  $("foot").innerHTML = `Scores, TV and box stats: ESPN public scoreboard. Live lines: The Odds API${WORKER_URL ? "" : " (not connected yet, so ESPN's pregame line is shown)"}.`
+    + (st.espnErr ? `<br><span class="err">${esc(st.espnErr)}</span>` : "") + (st.oddsErr ? `<br><span class="err">${esc(st.oddsErr)}</span>` : "");
 }
 function renderTiles(){
   const live = st.games.filter(g => g.state === "in").length, flagged = st.games.filter(g => g.flagged).length;
+  const u = st.usage, day = JSON.parse(localStorage.getItem(LSU) || "{}")[todayStr()] || {calls:0, credits:0};
+  const oddsState = !WORKER_URL ? "not connected" : !isToday() ? "off (not today)" : !live ? "waiting for a live game" : (document.hidden && !S.hidden) ? "paused (tab hidden)" : `every ${ODDS_MIN} min`;
   const t = (l, v, c) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="c">${c}</div></div>`;
   $("tiles").innerHTML =
     t("Live games", live, `${st.games.length} on the slate`) +
     t("Flagged now", flagged, `trailing + green in all three`) +
-    t("Refresh", `${S.espnSec}s`, isToday() ? ((document.hidden && !S.hidden) ? "paused (tab hidden)" : "auto-refreshing") : "past/future date");
+    t("Live odds", `<span style="font-size:15px">${esc(oddsState)}</span>`, `≈ ${Math.round(2*60/ODDS_MIN)} credits per live hour`) +
+    t("Credits remaining", u?.remaining != null ? u.remaining.toLocaleString() : "–", u?.used != null ? `${u.used.toLocaleString()} used this period (all apps)` : "from Odds API headers") +
+    t("This page today", day.credits, `${day.calls} odds calls in this browser`) +
+    t("This session", st.sessionCredits, st.startRemaining != null && u?.remaining != null ? `${(st.startRemaining - u.remaining).toLocaleString()} spent by all apps since open` : `${st.sessionCalls} odds calls`);
 }
 const isToday = () => ($("dateIn").value || todayStr()) === todayStr();
 
@@ -300,6 +417,8 @@ function tick(){
     // only keep refreshing a past/future date occasionally
     if(isToday() || now - st.lastEspn > 300e3) fetchEspn();
   }
+  const anyLive = st.games.some(g => g.state === "in");
+  if(WORKER_URL && isToday() && anyLive && (!document.hidden || S.hidden) && now - st.lastOdds >= ODDS_MIN*60e3) fetchOdds();
 }
 
 // ---------- wire up ----------
@@ -316,7 +435,7 @@ $("themeBtn").onclick = () => {
   document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
 };
 document.addEventListener("visibilitychange", () => { renderTiles(); if(!document.hidden) tick(); });
-fetchEspn();
+fetchEspn().then(fetchUsage);
 setInterval(tick, 5000);
 setInterval(renderTiles, 30000);
 })();
