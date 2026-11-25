@@ -9,21 +9,21 @@
   color-scheme: light;
   --bg:#f5f5f3; --surface:#fcfcfb; --surface-2:#f0efec; --border:#e2e1dc;
   --ink:#0b0b0b; --ink-2:#52514e; --ink-3:#7d7c76; --accent:#2a78d6; --flag:#eda100;
-  --pos:42,120,214; --neg:227,73,72;
+  --pos:42,120,214; --neg:227,73,72; --good:27,175,122;
 }
 @media (prefers-color-scheme: dark){
   :root:where(:not([data-theme="light"])){
     color-scheme: dark;
     --bg:#121211; --surface:#1a1a19; --surface-2:#262624; --border:#33332f;
     --ink:#f0efec; --ink-2:#c3c2b7; --ink-3:#8f8e86; --accent:#3987e5; --flag:#c98500;
-    --pos:57,135,229; --neg:230,103,103;
+    --pos:57,135,229; --neg:230,103,103; --good:25,158,112;
   }
 }
 :root[data-theme="dark"]{
   color-scheme: dark;
   --bg:#121211; --surface:#1a1a19; --surface-2:#262624; --border:#33332f;
   --ink:#f0efec; --ink-2:#c3c2b7; --ink-3:#8f8e86; --accent:#3987e5; --flag:#c98500;
-  --pos:57,135,229; --neg:230,103,103;
+  --pos:57,135,229; --neg:230,103,103; --good:25,158,112;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -122,20 +122,20 @@ tr.flag td.team{font-weight:700}
     <span class="muted" id="stamp"></span>
   </div>
   <div class="legend">
-    <span><span class="sw" style="background:rgba(var(--pos),.35)"></span>team ahead on the stat</span>
-    <span><span class="sw" style="background:rgba(var(--neg),.35)"></span>team behind on the stat</span>
+    <span><span class="sw" style="background:rgba(var(--good),.45)"></span>greener = lower 3P% margin, higher shot-volume margin, higher paint margin</span>
     <span><span class="sw" style="background:color-mix(in srgb,var(--flag) 40%,transparent)"></span>flagged team</span>
   </div>
   <div class="tw"><table id="tbl">
     <thead>
       <tr><th class="l">Status</th><th class="l">TV</th><th class="l">Team</th><th>Score</th>
-        <th class="grp" colspan="3">3-point</th>
-        <th class="grp" colspan="4">Shot volume</th></tr>
+        <th class="grp" colspan="5">3-point</th>
+        <th class="grp" colspan="4">Shot volume</th>
+        <th class="grp" colspan="2">Paint</th></tr>
       <tr><th class="l"></th><th class="l"></th><th class="l"></th><th></th>
-        <th class="bl">3PM-3PA</th><th>3P%</th><th>3P% diff</th>
-        <th class="bl">FGA</th><th>FTA</th><th>Volume</th><th>Margin</th></tr>
+        <th class="bl">3PM-3PA</th><th>3PM diff</th><th>3PA diff</th><th>3P%</th><th>3P% diff</th>
+        <th class="bl">FGA</th><th>FTA</th><th>Volume</th><th>Margin</th><th class="bl">Pts</th><th>Margin</th></tr>
     </thead>
-    <tbody><tr><td colspan="11" class="empty">Loading scoreboard…</td></tr></tbody>
+    <tbody><tr><td colspan="15" class="empty">Loading scoreboard…</td></tr></tbody>
   </table></div>
   <p class="note" id="foot">Scores, TV and box stats: ESPN public scoreboard.</p>
 </main>
@@ -207,9 +207,10 @@ async function fetchEspn(){
     if(!r.ok) throw new Error(`ESPN ${r.status}`);
     const j = await r.json();
     const games = (j.events || []).map(parseEvent).filter(g => g.teams.length === 2);
-    // Fallback: live/final games without box stats on the scoreboard -> per-game summary.
-    const need = games.filter(g => g.state !== "pre" && g.teams.some(t => !t.stats));
-    await Promise.all(need.slice(0, 40).map(async g => {
+    // Per-game summary for paint points (not on the scoreboard), and as a fallback for missing box stats.
+    // Live games refresh every cycle; finals are fetched once and cached.
+    const need = games.filter(g => g.state !== "pre");
+    await Promise.all(need.slice(0, 80).map(async g => {
       const cached = st.summaryCache[g.id];
       if(g.state === "post" && cached){ applySummary(g, cached); return; }
       try{
@@ -226,7 +227,10 @@ async function fetchEspn(){
 function applySummary(g, bxTeams){
   for(const bt of bxTeams){
     const t = g.teams.find(x => x.id === bt.team?.id);
-    if(t && !t.stats) t.stats = statsFromSummary(bt.statistics);
+    if(!t) continue;
+    if(!t.stats) t.stats = statsFromSummary(bt.statistics);
+    const pp = (bt.statistics || []).find(x => x.name === "pointsInPaint");
+    if(pp && pp.displayValue !== "" && !isNaN(Number(pp.displayValue))) t.paint = Number(pp.displayValue);
   }
 }
 
@@ -241,6 +245,9 @@ function derive(g){
   }
   for(const [t, o] of [[a,h],[h,a]]){
     t.tpDiff = t.tpp != null && o.tpp != null ? t.tpp - o.tpp : null;
+    t.tpmD = t.stats && o.stats ? t.stats.tpm - o.stats.tpm : null;
+    t.tpaD = t.stats && o.stats ? t.stats.tpa - o.stats.tpa : null;
+    t.paintM = t.paint != null && o.paint != null ? t.paint - o.paint : null;
     t.flag = g.state === "in" && t.score != null && o.score != null && t.score < o.score
       && t.svM != null && t.svM >= S.sv && t.tpDiff != null && -t.tpDiff >= S.gap
       && t.stats.tpa >= S.min3 && o.stats.tpa >= S.min3;
@@ -249,13 +256,15 @@ function derive(g){
 }
 
 // ---------- render ----------
-function tint(v, scale){
-  if(v == null || v === 0) return "";
-  const a = Math.min(1, Math.abs(v)/scale) * .4 + .06;
-  return `background:rgba(var(${v>0?"--pos":"--neg"}),${a.toFixed(2)})`;
+// Green scale only: v is oriented so that bigger = greener; zero/negative gets no color.
+function green(v, scale){
+  if(v == null || v <= 0) return "";
+  const a = Math.min(1, v/scale) * .5 + .08;
+  return `background:rgba(var(--good),${a.toFixed(2)})`;
 }
 const f1 = v => v == null ? "–" : (Math.round(v*10)/10).toFixed(1);
 const sgn = v => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + f1(Math.abs(v));
+const sgnI = v => v == null ? "–" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v);
 function statusCell(g){
   if(g.state === "pre") return `<span class="status pre">${esc(new Date(g.date).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"}))}</span>`;
   return `<span class="status ${g.state}">${esc(g.detail)}</span>`;
@@ -271,13 +280,15 @@ function teamRow(g, t, o, first){
   h += `<td class="l team">${t.rank ? `<span class="rk">${t.rank}</span>` : ""}${esc(t.short)}${t.flag ? '<span class="fl">FLAG</span>' : ""}</td>`;
   h += `<td class="score">${t.score == null || g.state === "pre" ? "" : t.score}</td>`;
   if(s){
-    h += `<td class="bl">${s.tpm}-${s.tpa}</td><td>${t.tpp == null ? "–" : f1(t.tpp) + "%"}</td>`;
-    h += `<td><span class="pc" style="${tint(t.tpDiff, 25)}">${sgn(t.tpDiff)}</span></td>`;
+    h += `<td class="bl">${s.tpm}-${s.tpa}</td><td>${sgnI(t.tpmD)}</td><td>${sgnI(t.tpaD)}</td><td>${t.tpp == null ? "–" : f1(t.tpp) + "%"}</td>`;
+    h += `<td><span class="pc" style="${green(t.tpDiff == null ? null : -t.tpDiff, 25)}">${sgn(t.tpDiff)}</span></td>`;
     h += `<td class="bl">${s.fga}</td><td>${s.fta}</td><td><b>${f1(t.sv)}</b></td>`;
-    h += `<td><span class="pc" style="${tint(t.svM, 12)}">${sgn(t.svM)}</span></td>`;
+    h += `<td><span class="pc" style="${green(t.svM, 12)}">${sgn(t.svM)}</span></td>`;
   }else{
-    h += `<td class="bl muted">–</td><td class="muted">–</td><td class="muted">–</td><td class="bl muted">–</td><td class="muted">–</td><td class="muted">–</td><td class="muted">–</td>`;
+    h += `<td class="bl muted">–</td>` + `<td class="muted">–</td>`.repeat(4) + `<td class="bl muted">–</td>` + `<td class="muted">–</td>`.repeat(3);
   }
+  h += `<td class="bl">${t.paint ?? '<span class="muted">–</span>'}</td>`;
+  h += `<td><span class="pc" style="${green(t.paintM, 16)}">${t.paintM == null ? '<span class="muted">–</span>' : sgnI(t.paintM)}</span></td>`;
   return h + "</tr>";
 }
 const ORDER = {in:0, pre:1, post:2};
@@ -287,8 +298,8 @@ function render(){
   let list = st.games.filter(g => (st.show === "all" || g.state === st.show) && (!flagOnly || g.flagged) && (!rankedOnly || g.teams.some(t => t.rank)));
   list.sort((a,b) => (ORDER[a.state]-ORDER[b.state]) || ((b.flagged?1:0)-(a.flagged?1:0)) || (Date.parse(a.date)-Date.parse(b.date)));
   let html;
-  if(!st.games.length) html = `<tbody><tr><td colspan="11" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
-  else if(!list.length) html = `<tbody><tr><td colspan="11" class="empty">No games match these filters.</td></tr></tbody>`;
+  if(!st.games.length) html = `<tbody><tr><td colspan="15" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
+  else if(!list.length) html = `<tbody><tr><td colspan="15" class="empty">No games match these filters.</td></tr></tbody>`;
   else html = list.map(g => {
     const [a, h] = g.teams;
     return `<tbody class="g ${g.state}">${teamRow(g, a, h, true)}${teamRow(g, h, a, false)}</tbody>`;
