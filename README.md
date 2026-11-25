@@ -21,6 +21,12 @@ play-by-play may show no paint points. No API key is needed.
 
 Filters: All / Live / Upcoming / Final, Flagged only, Ranked teams only, and a date picker for other days.
 
+## Team fouls and bonus
+On live games, **Fouls / This half** counts each team's fouls in the current half from ESPN's play-by-play (overtime
+carries the 2nd-half count). **Bonus** is shown on the team that shoots: "Bonus" (1-and-1) once the opponent has 7
+fouls in the half, "Double bonus" (two shots) at 10, otherwise "No". Games without ESPN play-by-play show "–". Every
+foul ESPN logs counts, including technicals, so a rare administrative technical could make the count one high.
+
 ## Live odds (The Odds API)
 Lines come from The Odds API (`basketball_ncaab`, `regions=us`, `markets=spreads,totals`, no moneyline). For each
 team's spread the page shows the most points available (then the best price), plus the lowest Over and highest Under,
