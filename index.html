@@ -53,8 +53,6 @@ input[type=number]{width:90px} input.wide{width:340px;max-width:100%}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .seg button{font:inherit;border:0;background:var(--surface);color:var(--ink-2);padding:6px 12px;cursor:pointer}
 .seg button.on{background:var(--accent);color:#fff}
-details.settings summary{cursor:pointer;font-weight:600}
-details.settings .controls{margin-top:12px}
 .tw{overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:5px 9px;text-align:right;white-space:nowrap}
@@ -93,23 +91,10 @@ tr.flag td.team{font-weight:700}
 </div></header>
 <main>
   <h1>Live scoreboard</h1>
-  <p class="sub">Shot volume = FGA + FTA/2. <span class="fl">FLAG</span> marks a team that is <b>trailing</b> while green in all three shaded columns: lower 3P%, higher shot volume and more paint points than its opponent (thresholds in Settings).</p>
+  <p class="sub">Shot volume = FGA + FTA/2. <span class="fl">FLAG</span> marks a team that is <b>trailing</b> while green in all three shaded columns: lower 3P%, higher shot volume and more paint points than its opponent (each margin just has to be above 0).</p>
 
   <div class="tiles" id="tiles"></div>
 
-  <details class="card settings" id="settingsBox">
-    <summary>Settings</summary>
-    <div class="controls">
-      <label>Scores refresh (seconds)<input type="number" id="sEspnSec" min="10" step="5"></label>
-    </div>
-    <div class="controls">
-      <label>Flag: 3P% deficit more than (pts)<input type="number" id="sGap" step="1"></label>
-      <label>Flag: shot-volume edge more than<input type="number" id="sSv" step="0.5"></label>
-      <label>Flag: paint-point edge more than<input type="number" id="sPaint" step="1"></label>
-      <label class="inline"><input type="checkbox" id="sHidden"> Keep refreshing when tab is hidden</label>
-    </div>
-    <div class="note">Settings are saved in this browser.</div>
-  </details>
 
   <div class="controls">
     <label>Date<input type="date" id="dateIn"></label>
@@ -144,29 +129,13 @@ tr.flag td.team{font-weight:700}
 (function(){
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball";
 const DEFAULTS = {espnSec:20, sv:0, gap:0, paint:0, hidden:false};
-const LS = "cbbLive.settings.v2";
-const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS) || "{}"));
+const S = DEFAULTS;
 const st = {games:[], espnErr:"", lastEspn:0, show:"all", summaryCache:{}};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const save = () => localStorage.setItem(LS, JSON.stringify(S));
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const todayStr = () => ymd(new Date());
 
-// ---------- settings UI ----------
-function bindSettings(){
-  const map = [["sEspnSec","espnSec","num"],["sSv","sv","num"],["sGap","gap","num"],["sPaint","paint","num"],["sHidden","hidden","bool"]];
-  for(const [id,k,t] of map){
-    const el = $(id);
-    if(t==="bool") el.checked = !!S[k]; else el.value = S[k];
-    el.addEventListener("change", () => {
-      let v = t==="bool" ? el.checked : Number(el.value);
-      if(k==="espnSec") v = Math.max(10, v || DEFAULTS.espnSec);
-      S[k] = v; save();
-      render();
-    });
-  }
-}
 // ---------- ESPN ----------
 const STAT_KEYS = {fieldGoalsMade:"fgm", fieldGoalsAttempted:"fga", freeThrowsMade:"ftm", freeThrowsAttempted:"fta",
                    threePointFieldGoalsMade:"tpm", threePointFieldGoalsAttempted:"tpa"};
@@ -347,7 +316,6 @@ $("themeBtn").onclick = () => {
   document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
 };
 document.addEventListener("visibilitychange", () => { renderTiles(); if(!document.hidden) tick(); });
-bindSettings();
 fetchEspn();
 setInterval(tick, 5000);
 setInterval(renderTiles, 30000);
