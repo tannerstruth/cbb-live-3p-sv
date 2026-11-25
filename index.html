@@ -134,7 +134,7 @@ const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-coll
 // ---- Live odds config ----
 // Paste your Cloudflare Worker URL here after deploying worker/odds-proxy.js (see README).
 // Leave it empty to run without live odds. Lines are the best available across US books.
-const WORKER_URL = "";
+const WORKER_URL = "https://plain-hall-cc8e.tanner-h-mcgrath.workers.dev";
 const ODDS_MIN = 2.5;   // minutes between odds calls (each call = 2 credits: spreads + totals)
 // ---------------------------
 const DEFAULTS = {espnSec:20, sv:0, gap:0, paint:0, hidden:false};
