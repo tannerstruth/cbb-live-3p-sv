@@ -93,7 +93,7 @@ tr.flag td.team{font-weight:700}
 </div></header>
 <main>
   <h1>Live scoreboard</h1>
-  <p class="sub">Shot volume = FGA + FTA/2. <span class="fl">FLAG</span> marks a team that is <b>trailing</b> despite a big shot-volume edge and a big 3P% deficit (thresholds in Settings).</p>
+  <p class="sub">Shot volume = FGA + FTA/2. <span class="fl">FLAG</span> marks a team that is <b>trailing</b> while green in all three shaded columns: lower 3P%, higher shot volume and more paint points than its opponent (thresholds in Settings).</p>
 
   <div class="tiles" id="tiles"></div>
 
@@ -103,9 +103,9 @@ tr.flag td.team{font-weight:700}
       <label>Scores refresh (seconds)<input type="number" id="sEspnSec" min="10" step="5"></label>
     </div>
     <div class="controls">
-      <label>Flag: shot-volume edge at least<input type="number" id="sSv" step="0.5"></label>
-      <label>Flag: 3P% deficit at least (pts)<input type="number" id="sGap" step="1"></label>
-      <label>Flag: min 3PA per team<input type="number" id="sMin3" step="1"></label>
+      <label>Flag: 3P% deficit more than (pts)<input type="number" id="sGap" step="1"></label>
+      <label>Flag: shot-volume edge more than<input type="number" id="sSv" step="0.5"></label>
+      <label>Flag: paint-point edge more than<input type="number" id="sPaint" step="1"></label>
       <label class="inline"><input type="checkbox" id="sHidden"> Keep refreshing when tab is hidden</label>
     </div>
     <div class="note">Settings are saved in this browser.</div>
@@ -143,8 +143,8 @@ tr.flag td.team{font-weight:700}
 "use strict";
 (function(){
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball";
-const DEFAULTS = {espnSec:20, sv:5, gap:10, min3:5, hidden:false};
-const LS = "cbbLive.settings";
+const DEFAULTS = {espnSec:20, sv:0, gap:0, paint:0, hidden:false};
+const LS = "cbbLive.settings.v2";
 const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS) || "{}"));
 const st = {games:[], espnErr:"", lastEspn:0, show:"all", summaryCache:{}};
 const $ = id => document.getElementById(id);
@@ -155,7 +155,7 @@ const todayStr = () => ymd(new Date());
 
 // ---------- settings UI ----------
 function bindSettings(){
-  const map = [["sEspnSec","espnSec","num"],["sSv","sv","num"],["sGap","gap","num"],["sMin3","min3","num"],["sHidden","hidden","bool"]];
+  const map = [["sEspnSec","espnSec","num"],["sSv","sv","num"],["sGap","gap","num"],["sPaint","paint","num"],["sHidden","hidden","bool"]];
   for(const [id,k,t] of map){
     const el = $(id);
     if(t==="bool") el.checked = !!S[k]; else el.value = S[k];
@@ -249,8 +249,9 @@ function derive(g){
     t.tpaD = t.stats && o.stats ? t.stats.tpa - o.stats.tpa : null;
     t.paintM = t.paint != null && o.paint != null ? t.paint - o.paint : null;
     t.flag = g.state === "in" && t.score != null && o.score != null && t.score < o.score
-      && t.svM != null && t.svM >= S.sv && t.tpDiff != null && -t.tpDiff >= S.gap
-      && t.stats.tpa >= S.min3 && o.stats.tpa >= S.min3;
+      && t.tpDiff != null && -t.tpDiff > S.gap
+      && t.svM != null && t.svM > S.sv
+      && t.paintM != null && t.paintM > S.paint;
   }
   g.flagged = a.flag || h.flag;
 }
@@ -318,7 +319,7 @@ function renderTiles(){
   const t = (l, v, c) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="c">${c}</div></div>`;
   $("tiles").innerHTML =
     t("Live games", live, `${st.games.length} on the slate`) +
-    t("Flagged now", flagged, `edge ≥ ${S.sv}, 3P% gap ≥ ${S.gap}`) +
+    t("Flagged now", flagged, `trailing + green in all three`) +
     t("Refresh", `${S.espnSec}s`, isToday() ? ((document.hidden && !S.hidden) ? "paused (tab hidden)" : "auto-refreshing") : "past/future date");
 }
 const isToday = () => ($("dateIn").value || todayStr()) === todayStr();
