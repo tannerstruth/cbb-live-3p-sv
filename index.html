@@ -105,6 +105,7 @@ tr.flag td.team{font-weight:700}
     </div>
     <label class="inline"><input type="checkbox" id="flagOnly"> Flagged only</label>
     <label class="inline"><input type="checkbox" id="top25Only"> Ranked teams only</label>
+    <label class="inline" title="When off, no Odds API calls are made and ESPN's pregame line is shown"><input type="checkbox" id="oddsOn"> Live odds</label>
     <div class="spacer"></div>
     <span class="muted" id="stamp"></span>
   </div>
@@ -139,7 +140,8 @@ const ODDS_MIN = 2.5;   // minutes between odds calls (each call = 2 credits: sp
 // ---------------------------
 const DEFAULTS = {espnSec:20, sv:0, gap:0, paint:0, hidden:false};
 const S = DEFAULTS;
-const LSU = "cbbLive.usage";
+const LSU = "cbbLive.usage", LSO = "cbbLive.oddsOn";
+let oddsOn = localStorage.getItem(LSO) !== "0";
 const st = {games:[], espnErr:"", lastEspn:0, show:"all", summaryCache:{},
             odds:null, oddsErr:"", usage:null, lastOdds:0, sessionCalls:0, sessionCredits:0, startRemaining:null};
 const $ = id => document.getElementById(id);
@@ -279,7 +281,7 @@ function matchOdds(g){
 // lowest Over, highest Under (then best price). Each one names its book.
 const better = (a, b, wantHigh) => !b || (a.point !== b.point ? (wantHigh ? a.point > b.point : a.point < b.point) : a.price > b.price);
 function lineFor(g){
-  const m = matchOdds(g), [away, home] = g.teams;
+  const m = oddsOn ? matchOdds(g) : null, [away, home] = g.teams;
   if(m){
     const awayName = m.homeName === m.ev.home_team ? m.ev.away_team : m.ev.home_team;
     const best = {away:null, home:null, over:null, under:null}; let upd = 0;
@@ -398,7 +400,7 @@ function render(){
 function renderTiles(){
   const live = st.games.filter(g => g.state === "in").length, flagged = st.games.filter(g => g.flagged).length;
   const u = st.usage, day = JSON.parse(localStorage.getItem(LSU) || "{}")[todayStr()] || {calls:0, credits:0};
-  const oddsState = !WORKER_URL ? "not connected" : !isToday() ? "off (not today)" : !live ? "waiting for a live game" : (document.hidden && !S.hidden) ? "paused (tab hidden)" : `every ${ODDS_MIN} min`;
+  const oddsState = !WORKER_URL ? "not connected" : !oddsOn ? "off" : !isToday() ? "off (not today)" : !live ? "waiting for a live game" : (document.hidden && !S.hidden) ? "paused (tab hidden)" : `every ${ODDS_MIN} min`;
   const t = (l, v, c) => `<div class="tile"><div class="l">${l}</div><div class="v">${v}</div><div class="c">${c}</div></div>`;
   $("tiles").innerHTML =
     t("Live games", live, `${st.games.length} on the slate`) +
@@ -418,7 +420,7 @@ function tick(){
     if(isToday() || now - st.lastEspn > 300e3) fetchEspn();
   }
   const anyLive = st.games.some(g => g.state === "in");
-  if(WORKER_URL && isToday() && anyLive && (!document.hidden || S.hidden) && now - st.lastOdds >= ODDS_MIN*60e3) fetchOdds();
+  if(WORKER_URL && oddsOn && isToday() && anyLive && (!document.hidden || S.hidden) && now - st.lastOdds >= ODDS_MIN*60e3) fetchOdds();
 }
 
 // ---------- wire up ----------
@@ -428,6 +430,8 @@ document.querySelectorAll("#segShow button").forEach(b => {
   b.classList.toggle("on", b.dataset.v === st.show);
   b.onclick = () => { st.show = b.dataset.v; document.querySelectorAll("#segShow button").forEach(x => x.classList.toggle("on", x === b)); render(); };
 });
+$("oddsOn").checked = oddsOn;
+$("oddsOn").onchange = () => { oddsOn = $("oddsOn").checked; localStorage.setItem(LSO, oddsOn ? "1" : "0"); render(); tick(); };
 $("flagOnly").onchange = render; $("top25Only").onchange = render;
 $("refreshBtn").onclick = () => fetchEspn();
 $("themeBtn").onclick = () => {
