@@ -3,9 +3,9 @@
 A live NCAA D-I men's scoreboard. For every game it shows status, TV channel, score, the best available live spread
 and over/under across US sportsbooks (with the book for each), and each team's
 3-point shooting (3PM-3PA, 3PM and 3PA differences, 3P%, 3P% gap), shot volume (**FGA + FTA/2**) with the margin,
-and points in the paint with the margin.
+points in the paint with the margin, and at-the-rim points with the margin.
 
-Color: only three columns are shaded, on a green scale: a lower 3P% margin, a higher shot-volume margin and a higher paint-point margin are greener.
+Color: only three columns are shaded, on a green scale: a lower 3P% margin, and higher shot-volume, paint-point and at-the-rim margins are greener.
 
 **Flag:** a team is flagged when it is trailing in a live game and is green in all three shaded columns: its 3P% is
 lower than its opponent's, its shot-volume margin is positive, and its paint-point margin is positive. Flags only
@@ -20,6 +20,11 @@ also loads each live game's ESPN summary on every refresh (finals load once). Sm
 play-by-play may show no paint points. No API key is needed.
 
 Filters: All / Live / Upcoming / Final, Flagged only, Ranked teams only, and a date picker for other days.
+
+## At-the-rim points
+ESPN has no at-the-rim stat, so the page derives it from play-by-play: every made 2-pointer whose description is a
+layup, dunk, tip-in, alley-oop or putback counts 2 points. It is an approximation: and-one free throws are not
+included, short floaters/hooks are not counted, and it depends on how ESPN's scorer labels each shot. It is not part of the flag rule.
 
 ## Team fouls and bonus
 On live games, **Fouls / This half** counts each team's fouls in the current half from ESPN's play-by-play (overtime

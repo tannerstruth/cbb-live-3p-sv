@@ -114,7 +114,7 @@ tr.flag td.team{font-weight:700}
     <span class="muted" id="stamp"></span>
   </div>
   <div class="legend">
-    <span><span class="sw" style="background:rgba(var(--good),.45)"></span>greener = lower 3P% margin, higher shot-volume margin, higher paint margin</span>
+    <span><span class="sw" style="background:rgba(var(--good),.45)"></span>greener = lower 3P% margin, higher shot-volume, paint and at-the-rim margins</span>
     <span><span class="sw" style="background:color-mix(in srgb,var(--flag) 40%,transparent)"></span>flagged team</span>
   </div>
   <div class="tw"><table id="tbl">
@@ -124,12 +124,13 @@ tr.flag td.team{font-weight:700}
         <th class="bl">Spread</th><th>Total</th>
         <th class="grp" colspan="5">3-point</th>
         <th class="grp" colspan="4">Shot volume</th>
-        <th class="grp" colspan="2">Paint</th></tr>
+        <th class="grp" colspan="2">Paint</th>
+        <th class="grp" colspan="2">At the rim</th></tr>
       <tr><th class="l"></th><th class="l"></th><th class="l"></th><th></th><th class="bl">This half</th><th>Bonus</th><th class="bl">best</th><th>best O / U</th>
         <th class="bl">3PM-3PA</th><th>3PM diff</th><th>3PA diff</th><th>3P%</th><th>3P% diff</th>
-        <th class="bl">FGA</th><th>FTA</th><th>Volume</th><th>Margin</th><th class="bl">Pts</th><th>Margin</th></tr>
+        <th class="bl">FGA</th><th>FTA</th><th>Volume</th><th>Margin</th><th class="bl">Pts</th><th>Margin</th><th class="bl">Pts</th><th>Margin</th></tr>
     </thead>
-    <tbody><tr><td colspan="19" class="empty">Loading scoreboard…</td></tr></tbody>
+    <tbody><tr><td colspan="21" class="empty">Loading scoreboard…</td></tr></tbody>
   </table></div>
   <p class="note" id="foot"></p>
 </main>
@@ -203,7 +204,7 @@ async function fetchEspn(){
       if(g.state === "post" && cached){ applySummary(g, cached); return; }
       try{
         const s = await (await fetch(`${ESPN}/summary?event=${g.id}`, {cache:"no-store"})).json();
-        st.summaryCache[g.id] = {box: s.boxscore?.teams || [], fouls: countFouls(s.plays)};
+        st.summaryCache[g.id] = {box: s.boxscore?.teams || [], fouls: countFouls(s.plays), rim: rimPoints(s.plays)};
         applySummary(g, st.summaryCache[g.id]);
       }catch(_){}
     }));
@@ -225,9 +226,23 @@ function countFouls(plays){
   }
   return f;
 }
+// At-the-rim points from play-by-play: made 2-pointers described as a layup, dunk, tip-in, alley-oop or putback.
+function rimPoints(plays){
+  if(!Array.isArray(plays) || !plays.length) return null;
+  const r = {};
+  for(const p of plays){
+    const tid = p.team?.id; if(!tid || !p.scoringPlay || Number(p.scoreValue) !== 2) continue;
+    if(!/lay ?-?up|dunk|tip|alley|putback|put-back/i.test(`${p.type?.text || ""} ${p.text || ""}`)) continue;
+    r[tid] = (r[tid] || 0) + 2;
+  }
+  return r;
+}
 function applySummary(g, sum){
   const half = Number(g.period) >= 2 ? 2 : 1;
-  for(const t of g.teams) t.fouls = sum.fouls ? (sum.fouls[t.id]?.[half] ?? 0) : null;
+  for(const t of g.teams){
+    t.fouls = sum.fouls ? (sum.fouls[t.id]?.[half] ?? 0) : null;
+    t.rim = sum.rim ? (sum.rim[t.id] ?? 0) : null;
+  }
   for(const bt of sum.box){
     const t = g.teams.find(x => x.id === bt.team?.id);
     if(!t) continue;
@@ -342,6 +357,7 @@ function derive(g){
     t.tpmD = t.stats && o.stats ? t.stats.tpm - o.stats.tpm : null;
     t.tpaD = t.stats && o.stats ? t.stats.tpa - o.stats.tpa : null;
     t.paintM = t.paint != null && o.paint != null ? t.paint - o.paint : null;
+    t.rimM = t.rim != null && o.rim != null ? t.rim - o.rim : null;
     // t shoots free throws on o's fouls: 1-and-1 from o's 7th foul, two shots from o's 10th.
     t.bonus = g.state === "in" && o.fouls != null ? (o.fouls >= 10 ? "Double bonus" : o.fouls >= 7 ? "Bonus" : "") : null;
     t.flag = g.state === "in" && t.score != null && o.score != null && t.score < o.score
@@ -398,6 +414,8 @@ function teamRow(g, t, o, first, L){
   }
   h += `<td class="bl">${t.paint ?? '<span class="muted">–</span>'}</td>`;
   h += `<td><span class="pc" style="${green(t.paintM, 16)}">${t.paintM == null ? '<span class="muted">–</span>' : sgnI(t.paintM)}</span></td>`;
+  h += `<td class="bl">${t.rim ?? '<span class="muted">–</span>'}</td>`;
+  h += `<td><span class="pc" style="${green(t.rimM, 16)}">${t.rimM == null ? '<span class="muted">–</span>' : sgnI(t.rimM)}</span></td>`;
   return h + "</tr>";
 }
 const ORDER = {in:0, pre:1, post:2};
@@ -407,8 +425,8 @@ function render(){
   let list = st.games.filter(g => (st.show === "all" || g.state === st.show) && (!flagOnly || g.flagged) && (!rankedOnly || g.teams.some(t => t.rank)));
   list.sort((a,b) => (ORDER[a.state]-ORDER[b.state]) || ((b.flagged?1:0)-(a.flagged?1:0)) || (Date.parse(a.date)-Date.parse(b.date)));
   let html;
-  if(!st.games.length) html = `<tbody><tr><td colspan="19" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
-  else if(!list.length) html = `<tbody><tr><td colspan="19" class="empty">No games match these filters.</td></tr></tbody>`;
+  if(!st.games.length) html = `<tbody><tr><td colspan="21" class="empty">${esc(st.espnErr) || (st.lastEspn ? "No D-I games on this date." : "Loading scoreboard…")}</td></tr></tbody>`;
+  else if(!list.length) html = `<tbody><tr><td colspan="21" class="empty">No games match these filters.</td></tr></tbody>`;
   else html = list.map(g => {
     const L = lineFor(g), [a, h] = g.teams;
     return `<tbody class="g ${g.state}">${teamRow(g, a, h, true, L)}${teamRow(g, h, a, false, L)}</tbody>`;
